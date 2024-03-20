@@ -26,7 +26,7 @@
 
 param(
     [Parameter(Mandatory=$false, HelpMessage="The OAuthClientId parameter specifies the the app ID for the OAuth token request.")]
-    [string] $OAuthClientId,
+    [string] $OAuthClientId = "1950a258-227b-4e31-a9cf-717495945fc2",
 
     [Parameter(Mandatory=$false, HelpMessage="The OAuthClientSecret parameter specifies the the app secret for the OAuth token request.")]
     [securestring] $OAuthClientSecret,
@@ -43,6 +43,10 @@ param(
     [Parameter(Mandatory=$False,HelpMessage="The CertificateStore parameter specifies the certificate store where the certificate is loaded.")]
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string] $CertificateStore = $null,
+
+    [Parameter(Mandatory=$false, HelpMessage="The PermissionType parameter specifies whether the app registrations uses delegated or application permissions")]
+    [ValidateSet('Application','Delegated')]
+    [string]$PermissionType,
 
     [ValidateScript({ Test-Path $_ })]
     [Parameter(Mandatory = $true, HelpMessage="The OutputPath parameter specifies the path for the EWS usage report.")]
@@ -562,6 +566,7 @@ function CheckTokenExpiry {
         )
 
     # if token is going to expire in next 5 min then refresh it
+    if($PermissionType -eq "Application") {
     if ($null -eq $script:tokenLastRefreshTime -or $script:tokenLastRefreshTime.AddMinutes(55) -lt (Get-Date)) {
         Write-Verbose "Requesting new OAuth token as the current token expires at $($script:tokenLastRefreshTime)."
         $createOAuthTokenParams = @{
@@ -607,6 +612,13 @@ function CheckTokenExpiry {
     }
     else {
         return $Script:Token
+    }
+    }
+    else {
+        if(($GraphToken.ExpiresOn.LocalDateTime).AddMinutes(-5) -le (Get-Date)) { 
+            $Script:GraphToken = Get-MsalToken -ClientId $OAuthClientId -TenantId $OAuthTenantId -Scopes $Script:Scope -ForceRefresh
+            $Script:Token = $Script:GraphToken.AccessToken
+        }
     }
 }
 
@@ -907,7 +919,8 @@ SetWriteWarningAction ${Function:Write-HostLog}
 $cloudService = Get-CloudServiceEndpoint $AzureEnvironment
 $Script:Scope = "$($cloudService.graphApiEndpoint)/.default"
 $azureADEndpoint = $cloudService.AzureADEndpoint
-    
+
+if($PermissionType -eq "Application") {
 Write-Host "Requesting an OAuth token to collect the data." -ForegroundColor Green
 $applicationInfo = @{
     "TenantID" = $OAuthTenantId
@@ -959,6 +972,11 @@ if ($oAuthReturnObject.Successful -eq $false) {
 $Script:GraphToken = $oAuthReturnObject.OAuthToken
 $script:tokenLastRefreshTime = $oAuthReturnObject.LastTokenRefreshTime
 $Script:Token = $Script:GraphToken.access_token
+}
+else {
+    $Script:GraphToken = Get-MsalToken -ClientId $OAuthClientId -TenantId $OAuthTenantId -Interactive -Scopes $Script:Scope
+    $Script:Token = $Script:GraphToken.AccessToken
+}
 
 $ExchangeMonitoringAPIs = @("getActiveUserMetricsForDesktopMailByReadEmail","getActiveUserMetricsForOutlookMobileByReadEmail","getActiveUserMetricsForOutlookWebByReadEmail",
 "getActiveUserMetricsForOutlookMacByReadEmail","getActiveUserMetricsForiOSOrAndroidMailByReadEmail","getActiveUserMetricsForOutlookWebByAppOpening",
